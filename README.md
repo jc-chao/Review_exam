@@ -20,6 +20,8 @@ Sources: [02-neural-networks/](02-neural-networks/) NB1–5 + [answer-sheet.md](
 
 **Test set discipline:** the test set never updates weights. But once you change knobs because of its score, it is helping you choose a model and is no longer independent. Tune on a **validation** set, and look at the test set once, at the end.
 
+?? No good with confusion matrix and precision and recall. cannot remember formula
+
 ---
 
 # Part A: Neural Networks (02-neural-networks)
@@ -37,15 +39,36 @@ Sources: [02-neural-networks/](02-neural-networks/) NB1–5 + [answer-sheet.md](
 | **Gradient** | The slope of the loss for each weight. Together these slopes form the gradient. |
 | **Gradient descent** | `w ← w − learning_rate × slope`. Repeat. |
 | **Learning rate** | Step size. A *hyperparameter* chosen before training and never learned. |
-| **Backpropagation** | Computes all the slopes in **one backward pass** with the chain rule, instead of nudging each weight (one data pass per weight, which can't scale to millions of weights). |
+| **Backpropagation** | Computes all the slopes in **one backward pass** with the chain rule, instead of nudging each weight (one data pass per weight, which can't scale to millions of weights). Instead of changing 1 weight at a time, are r chaning 1 billion weights at a time using two passes: 1) forward pass to cal loss and 2) backward pass to cal gradients of every weights simualtaneously. This can work becos of chain rule in calculus. |
 | **Activation (ReLU, Tanh)** | A non-linearity between layers. Without it, a weighted sum of weighted sums is still one weighted sum, so the boundary stays straight. ReLU = `max(0, x)` (piecewise-straight bends); Tanh = smooth curves. "Deep" = more layers with activations between them. |
-| **Hidden width** | Neurons in the hidden layer, *not* input features. Too few → **underfit** (HIDDEN=3 leaves ~20 wrong). More = more **capacity**, but a bendy boundary alone doesn't prove overfitting; you need held-out data to tell. |
+| **Hidden width** | Neurons in the hidden layer, *not* input features. Too few → **underfit** (HIDDEN=3 leaves ~20 wrong). More = more **capacity**, but a bendy boundary alone doesn't prove overfitting; you need held-out data to tell. Why hidden layer? because it sits between input features and output, invisible to normal users - hidden. Depth refers to no. of hidden layers, while width refers to the number of neurons in 1 layer. Small width might result in underfiting. But more width does not mean overfitting (need to be proved on testing test set). It just means that it has higher capacity to draw complex/curvy boundary. |
 | **Batch / epoch** | Batch = the points used for one update. Epoch = one full pass over the training data. Updates per epoch = ⌈N / batch_size⌉. |
-| **Optimiser** | The rule that turns gradients into updates. SGD: `−lr·grad`. **Adam** keeps running averages of gradients and squared gradients and **rescales each weight's step**, so its usual lr is ~10× smaller than SGD's. |
+| **Optimiser** | The rule that turns gradients into updates. SGD: `−lr·grad`. **Adam** keeps running averages of gradients and squared gradients and **rescales each weight's step**, so its usual lr is ~10× smaller than SGD's. ADAM - $$\theta_{t+1} = \theta_t - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} \hat{m}_t$$ |
 | **Train vs test accuracy** | Train = fit on points used for updates. Test = estimate on new points. A big gap = **overfitting**. |
 | `model.train()` / `model.eval()` | Switch the mode for layers like dropout and batchnorm. They don't choose data or update weights. |
 | `@torch.no_grad()` | No gradients tracked during evaluation, which saves memory and time. |
 | **BCEWithLogitsLoss** | Log loss that takes raw scores ("logits") and applies the sigmoid internally. |
+
+Adam optmizer
+
+$$\theta_{t+1} = \theta_t - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} \hat{m}_t$$
+
+Where:$\theta$ is the weight parameter.
+
+$\eta$ is the base learning rate (typically around $0.001$, which is why it's roughly $10\times$ smaller than standard SGD learning rates).
+
+$\hat{m}_t$ is the bias-corrected momentum (first moment) - exponential average of past gradients - better than simpler average and gives more weights to recent gradients
+
+
+$\hat{v}_t$ is the bias-corrected squared gradient (second moment). - exponential average of past squared gradients
+
+$\epsilon$ is a tiny number (like $10^{-8}$) added to prevent division by zero.
+
+Typical Default ValuesStandard SGD default learning rate: 
+
+
+- Often set around $0.01$ or $0.1$.Adam default learning rate: 
+- Often set around $0.001$ (which is $10\times$ to $100\times$ smaller).
 
 ### The training loop (know every line)
 ```python
@@ -53,9 +76,11 @@ model.train()
 for x, y in loader:
     optimizer.zero_grad()          # grads ACCUMULATE in PyTorch unless cleared
     loss = criterion(model(x), y)  # forward pass + score
-    loss.backward()                # backprop: slope for every weight
-    optimizer.step()               # update weights by the optimiser's rule
-    total_loss += loss.item() * len(x)   # weight by batch size (last batch may be smaller)
+    loss.backward()                # backprop: slope for every weight, not yet updating the weights
+    optimizer.step()               # update weights by the optimiser's rule - Wnew = Wnew - lr*gradient
+    total_loss += loss.item() * len(x)   # loss.item = average loss per sample. 
+                                         # len(x) = no.of items in current batch
+                                         # so togther, they are cumulative loss for all samples in a batch
 ```
 
 ### Exercises
@@ -71,18 +96,52 @@ For contrast: lr 0.01 is still falling at step 100 (too slow), and lr 5 falls fa
 
 **Ex 1.6. A colleague copies SGD's learning rate into Adam and the loss diverges. What went wrong?**
 ⚠ Fix: your answer argued that Adam is *faster at tiny learning rates*. The question is about **divergence**. The point is that **the same number means different things under each rule**:
-- SGD's step = `lr × gradient`, so it scales with how big the gradient is.
-- Adam's step ≈ `lr × m̂/√v̂`. Dividing by the running gradient size normalises it, so **each weight moves roughly `lr` per step regardless of gradient size.**
+- SGD's step = `lr × gradient`, so it scales with how big the gradient is. Mathematically, SGD is affected by gradient size. Gradient as a fraction of LR makes the movement of weight change smaller by nature.
+- Adam's step ≈ `lr × m̂/√v̂`. (e is just to prevent 2ero division). Dividing by the running gradient size normalises it, so **each weight moves roughly `lr` per step regardless of gradient size. So Adam is less affected by gradient size.**
+  
+- $$\text{EMA}_t = \alpha Y_t + (1 - \alpha) \text{EMA}_{t-1}$$ (EMA is exponential moving average - $$\text{New EMA} = (\alpha \times \text{New Data}) + ((1 - \alpha) \times \text{Previous EMA})$$)
+
 - So an lr that is fine for SGD (0.1, where small gradients keep steps small) makes Adam take full-size 0.1 steps on every weight. It overshoots and diverges (the Try showed Adam at 0.1 bouncing).
 - Lesson: re-tune lr per optimiser. Adam's typical default is 1e-3, roughly 10× smaller than SGD's. Never compare optimisers at the same lr.
+
+
+**Adam explain**
+- $$\text{EMA}_t = \alpha Y_t + (1 - \alpha) \text{EMA}_{t-1}$$ 
+
+(EMA is exponential moving average - $$\text{New EMA} = (\alpha \times \text{New Data}) + ((1 - \alpha) \times \text{Previous EMA})$$)
+
+New EMA = (α × New Data) + ((1 - α) × Previous EMA)
+
+Concrete Numerical Example:
+Let's set our smoothing factor to α = 0.5 (meaning 50% weight to the new data, 50% weight to the past memory), and our incoming data stream is [10, 20, 40].
+
+1. First data point (Y₁ = 10):
+   - If it's the very beginning, your initial EMA is just the first number: EMA₁ = 10.
+2. Second data point (Y₂ = 20):
+   - EMA₂ = (0.5 × 20) + (0.5 × 10)
+   - EMA₂ = 10 + 5 = 15
+3. Third data point (Y₃ = 40):
+   - EMA₃ = (0.5 × 40) + (0.5 × 15)
+   - EMA₃ = 20 + 7.5 = 27.5
+
+
+
+
+
+
+
+
+
+
+
+
 
 **Ex 1.7. At 500 epochs the accuracies separate (train 93%, test 89%). What does the gap mean, why does test count, and what one thing would you change?**
 - The gap means the model has started **overfitting**: it is learning noise and quirks of the 200 training points that don't generalise.
 - Test counts because it is data the model **never trained on**, so it estimates performance on new data. Training accuracy is optimistic by construction.
-- ⚠ Fix: you didn't name the one change. Pick one: **train for fewer epochs / early-stop** on a validation curve, or use a smaller HIDDEN, or add regularisation. Also move repeated tuning onto a **validation set**.
+- ⚠ Fix: you didn't name the one change. Pick one: **train for fewer epochs / early-stop** on a validation curve, or use a smaller HIDDEN, or add regularisation. Also move repeated tuning onto a **validation set**.---
 
----
-
+- The techanique to reduce overfitting is: 1) early stop 2) L2 regularization - sum of weight squared added to the loss
 ## NB2: Computer Vision Basics (images as data, and a number to beat)
 
 ### Concepts
@@ -107,11 +166,6 @@ For contrast: lr 0.01 is still falling at step 100 (too slow), and lr 5 falls fa
 **Ex 2.2a. Why is shuffling harmless here? Give a dataset where shuffling before the split misleads you.**
 Each cell image is a complete, independent sample, so photo order carries no signal. **Time series** is the counter-example: shuffling before the split puts *future* rows in training and their neighbours in test. That is leakage, and it makes the error look better than real forecasting would.
 
-**Ex 2.2b. EDA write-up (question, what you saw, what you'd check next).**
-- *Q1: do same-label images look alike?* Within a class, colour and shape are similar, but crop position and background vary a lot. Distance to own class mean: platelets 97% closest to their own mean; immature granulocytes only 21%. So IG is the likely weak class.
-- *Q2: any blank or odd images?* No blanks. Some low contrast, some badly cropped, some odd background colours, and exact duplicates.
-- *Next:* check per-class accuracy / confusion matrix for IG. Check whether odd backgrounds cluster in certain classes (a model could learn "background → class" shortcuts).
-
 **Ex 2.3. Is the baseline good? Argue against guessing and against the lab's needs, then set the bar for the network.**
 - *Against guessing:* 77% vs 19.5%, about 4× better. It clearly learned from the pixels.
 - *Against the lab:* about 780 of 3,421 test images land in the wrong bin. That is a lot of manual re-checking, and one overall number can hide a weak class (basophils are ~7% of training data; IG is suspect from EDA).
@@ -125,6 +179,45 @@ Each cell image is a complete, independent sample, so photo order carries no sig
 - **Two facts about images:** (1) a pixel relates to its **neighbours** (edges and blobs are local), and (2) a pattern means the same thing **wherever** it appears.
 - **Scramble experiment:** shuffle the pixel positions the same way for every image. Logistic regression scores the **same** (~77%), which proves it never used spatial layout. A CNN would collapse on scrambled images.
 - **Conv2d:** a small window of weights slides over every position. Small window = **local connectivity**. Same window everywhere = **weight sharing**. (Formal names: sparse interactions, parameter sharing. Together these are the CNN's **inductive bias**.) PyTorch doesn't flip the window (strictly cross-correlation); with learned weights it makes no difference.
+
+**layers **
+```
+# Feature extractor: convolutions slide small 3x3 filters over the image, so they see pixels next to their
+        # neighbours (unlike logistic regression), and the same filter is reused everywhere, which saves parameters.
+        self.features = nn.Sequential(
+            # 16 feature maps (patterns) are extracted from the 3 colour channels, then 32 patterns-of-patterns from those.
+            nn.Conv2d(3, 16, kernel_size=3, padding=1),   # 3 colour channels in, 16 pattern maps out
+                                                          # (padding=1 keeps the size at 28x28)
+            nn.ReLU(),                                    # non-linearity: without it, stacked layers collapse into one linear map
+            nn.MaxPool2d(2), #2 set pooling window to be 2*2                             # 28x28 -> 14x14
+                                                          # (keeps the strongest response per 2x2 block: less compute,
+                                                          #  and tolerates small shifts of the cell in the image)
+            # number 16 as input channels what u chosen
+            # it means the output of the previous layer is 16 channels, so the next layer should take 16 channels as input
+            # how do i know the input channels? because the previous layer outputs 16 channels, so the next layer should take 16 channels as input
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),  # patterns of patterns
+                                                          # (each filter now combines the 16 maps from the layer above)
+            nn.ReLU(),
+            nn.MaxPool2d(2),                              # 14x14 -> 7x7
+        )
+        # Classifier: turns the extracted features into one score per class.
+        self.classifier = nn.Sequential(
+            nn.Flatten(),                                 # 32 maps of 7x7 -> one row of 1568 numbers
+            # how do we know it is 32 * 7 * 7? because the last convolutional layer outputs 32 channels, and the max pooling reduces the spatial dimensions to 7x7, so the total number of features is 32 * 7 * 7
+            # some mathematically formuale
+            # what is the hidden number? it is a hyperparameter that we can tune, it is the number of neurons in the hidden layer, we can try different values and see which one works best
+            # so it means no of neurons in the hidden layer is 128, which is a good starting point for this problem
+            # 1 neuron means 1 output, so we need 128 neurons in the hidden layer to have enough capacity to learn the features of the images
+            nn.Linear(32 * 7 * 7, HIDDEN),
+            nn.ReLU(),
+            # class_names are 10 classes, so the final layer has 10 outputs, one per class.
+            # we are passing Hidden outpus from previous layer to the final layer, so the input to the final layer is HIDDEN, and the output is len(class_names)
+            nn.Linear(HIDDEN, len(class_names)),          # one score per class
+                                                          # (raw scores, "logits"; no softmax here because
+                                                          #  CrossEntropyLoss applies it internally)
+        )
+```
+
 - **Architecture:**
 ```
 (3,28,28) → Conv(3→16,k3,p1) → ReLU → MaxPool2 → (16,14,14)
@@ -132,9 +225,12 @@ Each cell image is a complete, independent sample, so photo order carries no sig
           → Flatten (1568) → Linear(1568→128) → ReLU → Linear(128→8) logits
 ```
 - `padding=1` with a 3×3 kernel keeps H×W the same. Each pool halves H and W.
+- ?? Not very sure of the above flow
 - **No softmax at the end:** `CrossEntropyLoss` applies it internally to raw logits. CrossEntropy is log loss for many classes.
 - **Parameter counts:** CNN 206,952; logistic 18,824 (8×2352 + 8); no-conv MLP 302,216. **Almost all the CNN's params sit in the first Linear (1568×128).** The convolutions hold under 6k, and they *reduce* cost by shrinking what reaches the Linear layer.
-- Parameter formulas: conv = `out_ch × (in_ch × k × k + 1)`; linear = `out × (in + 1)`.
+  - What is cross entropy?
+  - How did we cal dimension as it moves from layer to layer?
+- Parameter formulas: conv = `out_ch × (in_ch × k × k + 1)`[K*K is the window, k is the kernel size]; linear = `out × (in + 1)`.
 - **Training:** Adam, lr 1e-3, 15 epochs. Loss drops steeply, then flattens. Still edging down means more epochs might help. Flat from the start: check data, labels and lr. Bouncing: lower the lr.
 - **Evaluate:** pred = `argmax` over class scores (not a threshold at 0). Scoreboard: guess 19.5% → logistic 77.2% → **CNN 88.8%**.
 - **Confusion matrix:** rows = true, columns = predicted, diagonal = correct.
@@ -142,12 +238,53 @@ Each cell image is a complete, independent sample, so photo order carries no sig
   - **Precision** = diagonal / **column** sum ("of those called basophil, how many were?"). 196/273 = 0.72.
   - **Accuracy** = diagonal / total, so a small class can be missed with little effect on it.
   - **Macro recall** = mean of the per-class recalls; every class counts equally. Here 0.881 vs accuracy 0.888 (close, because the weakest class, IG, is also large).
-- **Inference cost:** `predict_one` adds a batch dim with `unsqueeze(0)` → 4 ms/image on CPU, 0.83 MB of weights. Warm up before timing. These numbers are good for **comparing models**, but are *not* the full deployment cost (no loading, preprocessing or serving overhead).
+
+**metric cal**
+# Classification Metrics Demonstration (Cat, Dog, Rabbit)
+
+## 1. Confusion Matrix
+| | Pred: Cat | Pred: Dog | Pred: Rabbit | Row Sum (Real Total) |
+| :--- | :---: | :---: | :---: | :---: |
+| **True: Cat** | **50** | 5 | 2 | 57 |
+| **True: Dog** | 3 | **40** | 2 | 45 |
+| **True: Rabbit**| 1 | 4 | **35** | 40 |
+| **Col Sum (Predicted Total)** | 54 | 49 | 39 | **Total = 142** |
+
+---
+
+## 2. Recall (Mnemonic: RR -> Recall = Row)
+* **Formula:** $\frac{\text{Diagonal}}{\text{Row Sum}}$ ("Of all the real instances, how many did we catch?")
+- **Cat Recall:** 50 / 57 = 0.877
+- **Dog Recall:** 40 / 45 = 0.889
+- **Rabbit Recall:** 35 / 40 = 0.875
+- recall is better metric for cancer patient, cost of false negative is high, so we want true positives/actual positives to be as high as possible to reduce false negative.
+
+---
+
+## 3. Precision (Mnemonic: PC -> Precision = Column)
+* **Formula:** $\frac{\text{Diagonal}}{\text{Column Sum}}$ ("Of all the times the model claimed a class, how often was it right?")
+- **Cat Precision:** 50 / 54 = 0.926
+- **Dog Precision:** 40 / 49 = 0.816
+- **Rabbit Precision:** 35 / 39 = 0.897
+
+- true positives / predicted postives
+---
+
+## 4. Accuracy
+* **Formula:** $\frac{\text{Total Correct (Diagonal Sum)}}{\text{Total Samples}}$
+- **Calculation:** $(50 + 40 + 35) / 142 = 125 / 142 = 0.880$ (88.0%)
+
+---
+
+## 5. Macro Recall
+* **Formula:** Unweighted average of all per-class recalls (gives every class equal weight)
+- **Calculation:** $(0.877 + 0.889 + 0.875) / 3 = 2.641 / 3 = 0.880$
+
 
 ### Exercises
 
 **Ex 3.1a. What do `MaxPool2d` and `Flatten` do to the block of numbers (shape in, shape out, kept vs thrown away)?**
-- **MaxPool2d(2):** `(C, H, W) → (C, H/2, W/2)`, e.g. `(16,28,28) → (16,14,14)`. In each 2×2 block it keeps only the **largest** value. **¾ of the numbers are thrown away**, along with the *exact* position: the survivor says "the pattern was somewhere in this block". Benefits: less compute, tolerance to small shifts, and the next conv sees a wider area of the original image. Channels are unchanged.
+- **MaxPool2d(2): use 2*2 window (take max from window) with a stride of 2** `(C, H, W) → (C, H/2, W/2)`, e.g. `(16,28,28) → (16,14,14)`. In each 2×2 block it keeps only the **largest** value. **¾ of the numbers are thrown away**, along with the *exact* position: the survivor says "the pattern was somewhere in this block". Benefits: less compute, tolerance to small shifts, and the next conv sees a wider area of the original image. Channels are unchanged.
 - **Flatten:** `(32, 7, 7) → (1568,)` per image (batch: `(N,32,7,7) → (N,1568)`). It **only rearranges** into one row so a Linear layer can take it. No value changes and nothing is thrown away. Same as `.flatten(1)` before logistic regression.
 - ⚠ Fix: you wrote that Flatten gives "[1,3,4,4]", which is a 4-D shape. The output is **1-D per sample**.
 
@@ -166,14 +303,7 @@ Each cell image is a complete, independent sample, so photo order carries no sig
   3. **Macro-F1:** harmonic mean of precision and recall, averaged per class. It catches a class that is weak on either side, weighted equally regardless of size.
   4. (Alt) **Log loss / calibration:** whether the confidence is trustworthy. It catches confidently-wrong predictions, which matters if confidence decides what the technician re-checks.
 
-**Ex 3.5. Which tool for which problem?**
-| # | Problem | Approach | Why / missing detail |
-|---|---|---|---|
-| 1 | Circuit boards, missing component | **Computer vision** | Image in, defect yes/no out. A fixed camera and fixed board layout may even allow classical template comparison. Detail: how many defect examples exist. |
-| 2 | Discharge summaries → plain language | **Language model** | Free text in, rewritten text out. Detail: privacy (patient data) and the need for clinician review. |
-| 3 | Drug orders from 3 years of weekly sales | ⚠ **Classical methods** (time-series forecasting: seasonal-naive baseline, lags + Random Forest) | Numbers in, a number out. No CV or LLM needed. |
-| 4 | PDF forms, fixed fields → spreadsheet | ⚠ **Classical / neither** first | Same fields in the same place, so a PDF text/field parser or template extraction is enough. Add **OCR** only if the PDFs are scanned images. An LLM only if layouts actually vary across clinics. Detail: digital or scanned PDF? |
-| 5 | Skin photos, flag urgent | **Computer vision** (CNN) | Image in, urgency flag out. Detail: labelled data, class imbalance; optimise **recall** for urgent cases. |
+ |
 
 ---
 
@@ -181,12 +311,12 @@ Each cell image is a complete, independent sample, so photo order carries no sig
 
 ### Concepts
 - **Tidy first:** combine year/month/day/hour into one `DatetimeIndex` with `pd.to_datetime`, `set_index`, `sort_index`, then drop the old columns. This enables `.loc["2013"]`, `resample`, and `.index.hour`.
-- **Cadence** = the most common gap between rows (`index.diff().mode()`): hourly here.
+- **Cadence** = the most common gap between rows (`index.diff().mode()`): hourly here. - inteval of timestamp, which is 1 hour here
 - **Order matters:** the same values shuffled lose all structure.
 - **Four things to look for:** trend, seasonality, autocorrelation, noise.
 - **Decomposition** (`seasonal_decompose(series, period=…)`): trend + seasonal + residual. It can't handle NaN, so fill first. `period=24` (daily) gives the cleaner seasonal and a smaller residual than `24*7`: PM2.5's strongest short cycle is the **day**.
 - **Stationary:** roughly stable mean and variance over time (check with rolling mean and std). The ADF test's null = unit root (non-stationary); small p is evidence against it, not proof of stationarity.
-- **ACF / PACF:** correlation with lagged copies of itself. ACF decays gradually (short-term persistence dominates). PACF is strongest at the first few lags.
+- **ACF / PACF (test whether ur data is stationary without upward trend, fluctuating around mean with constant variance):** correlation with lagged copies of itself. ACF decays gradually (short-term persistence dominates). PACF is strongest at the first few lags.
 - **Cyclical encoding:** `sin(2π·h/24)`, `cos(2π·h/24)` puts the hours on a circle.
 - **Scales:** a single day shows the daily rhythm (high at night, low mid-afternoon); the full record shows the yearly rhythm (high in cold months). Each hides what the other shows. The yearly swing is **bigger**; the daily cycle is **cleaner**.
 - **Moving average:** a bigger window is smoother but **flattens the spikes you may care about most**.
@@ -197,7 +327,7 @@ Each cell image is a complete, independent sample, so photo order carries no sig
 ### Exercises
 
 **Ex 4.0a. How does time-series data differ from regular data? Examples and analyses?**
-- **Temporal dependence:** rows are *not* independent; order is fixed and neighbours are correlated (autocorrelation). Regular tabular ML assumes independent rows.
+- **Temporal (meaning: related to time) dependence:** rows are *not* independent; order is fixed and neighbours are correlated (autocorrelation). Regular tabular ML assumes independent rows.
 - Has structure tabular data doesn't: **trend, seasonality, cycles**. It can't be shuffled and needs chronological splits.
 - Examples: retail sales (forecasting), stock prices (moving averages, volatility), sensor and pollution readings (anomaly detection), ECG (classifying sequences). Analysis types: describe patterns, classify sequences, forecast.
 
@@ -210,9 +340,9 @@ Each cell image is a complete, independent sample, so photo order carries no sig
 - So a **random train/test split** for forecasting puts each test hour's neighbours in training (**leakage**) and tests on "the past", not the future. It gives an over-optimistic error. Use a **chronological split**.
 
 **Ex 4.2a. Additive vs multiplicative decomposition?**
-- **Additive:** `Y = T + S + R`. The seasonal swing has a **constant size** whatever the level. Simple and works with zero or negative values, but wrong if the swings grow with the level.
+- **Additive:** `Y = T + S + R (residual=noise)`. The seasonal swing has a **constant size** whatever the level. Simple and works with zero or negative values, but wrong if the swings grow with the level.
 - **Multiplicative:** `Y = T × S × R` (⚠ you wrote T×S×T). The seasonal swing **scales with the level** (e.g. sales peaks grow as the business grows). Handles growing amplitude; needs strictly positive values. A log transform turns it into additive.
-- Use multiplicative when the seasonal amplitude grows or shrinks with the trend. For PM2.5 additive was used; you could argue for multiplicative if the daily swings are larger in high-pollution winter.
+- Use multiplicative when the `seasonal amplitude grows or shrinks with the trend`. For PM2.5 additive was used; you could argue for multiplicative if the daily swings are larger in high-pollution winter.
 
 **Ex 4.2c. Hour as 0–23 vs one-hot vs sin/cos?**
 | Encoding | Wraparound explicit? | Gains | Loses |
@@ -236,43 +366,20 @@ Each cell image is a complete, independent sample, so photo order carries no sig
 | **interpolate** | Straight line from before to after | Looks most realistic and smooth | **Quietly** uses the future endpoint |
 - **Interpolate** is the one that quietly looks into the future: it looks plausible, so the leak is easy to miss (bfill does it openly). In forecasting, filled training features then contain information that wouldn't be available at prediction time. That is **leakage**, and it gives optimistic scores that fail in production. Default to ffill.
 
-**Ex 4.4b. Red outlier points: errors or real pollution? How to decide, and the cost of each mistake?**
-- *Decide:* check plausibility (physically possible?), **consistency with neighbours** (a gradual build-up = real; a single isolated jump = suspicious), season (winter peaks are expected; the **July** points stand out), and other variables or stations (low wind, etc.). Don't delete just because a point is rare.
-- ⚠ Add the **cost in each direction**:
-  - Treat **real** spikes as errors and delete them → the model never learns smog events, under-forecasts exactly the dangerous days, and health warnings are missed. Usually the **costlier** mistake.
-  - Treat **sensor errors** as real → the model learns false spikes, over-forecasts, and inflates the error metric (especially RMSE). Result: false alarms.
+
 
 ---
 
 ## NB5: Time Series Forecasting (Walmart M5, store CA_1, daily)
 
-### Concepts
-- **Lag trick:** turn a sequence into a supervised table. Each row's features are past values `X(t−1)…X(t−k)` and its target is `X(t+h)`. Still **univariate** (one measured variable), however many lag columns you build. **Calendar features** (day of week, month, holidays) are allowed because a future date is known in advance.
-- **Problem:** input = recent demand + calendar context for the target day; output = units sold **HORIZON** days ahead; metric = **RMSE** (in units, lower is better).
-- **Strongest cycle** = weekly → **ACF spikes at lag 7** (and 14, 21, 28).
-- `build_supervised`: `lag_0` = today, `lag_l = s.shift(l)`, `roll_mean_7`, dow/month sin and cos, `is_event`, `snap`. **target = `s.shift(-horizon)`** pulls the future value onto today's row. `dropna` removes the first rows (not enough history) and the last `horizon` rows (no future yet).
-- **Chronological split:** the first 80% of time is train and the last 20% is test. Demo at a 7-day horizon: chrono RMSE 510.8 vs random 501.5. The random split **flatters** the model.
-- Boundary leak: with a large horizon, the last training rows' *targets* fall inside the test period. Fix it by leaving a gap of `HORIZON` days.
-- **Baselines:**
-  - **Naive / persistence:** tomorrow = today (`lag_0`). RMSE 917.2.
-  - **Seasonal-naive:** same weekday last week (`shift(SEASON − HORIZON)`). RMSE **600.4**. This is the bar, because retail is day-of-week driven.
-  - **The bar to beat = the *best* simple baseline.**
-- **Random Forest** (100 trees averaged) on all features → **RMSE 431.8**, a real win (~28% better than seasonal-naive).
-- **Error inspection:** busiest 10% of days under-forecast by ~580; quietest 10% over-forecast by ~211, so it **regresses toward the mean**. Christmas (store closed, ~0 sales) is left out.
-- **Horizon curve (optional):** error generally rises with horizon. Seasonal-naive is undefined when h > 7.
-- **Sequence models:** RNN/LSTM read the series step by step and carry a hidden state; LLMs (Transformers) predict the next **token** the same way. Not automatically better than a baseline.
+##
 
-### Exercises
-
-**Ex 5.1. With a 4-week (28-day) horizon instead of 1 day, is yesterday still useful? What matters more?**
-- Yesterday is much less useful: it's 28 days before the target, not 1. (Note: features can only use data up to the forecast date, so "the value right before the target" isn't available.)
-- More important: **day of week** of the target day (Saturday ≫ Tuesday), the **same weekday 4 or 52 weeks earlier** (lag 28, 364), **monthly / yearly seasonality** (e.g. August peak), **holiday/event** and **SNAP** flags for the target date, and longer rolling means (28-day) for the level.
-- Change: rebuild the lags relative to the horizon, add longer lags and rolling windows, put calendar features on the **target** date, and leave a horizon-sized gap between train and test.
+###
 
 **Ex 5.2a. Why is the random split's lower error a lie? Explain to a client.**
 "With a random split, the model is tested on days whose neighbours, including the days *after* them, were in training. It's like predicting Tuesday after already seeing Monday *and Wednesday*. In real use you only ever have the past, so the random-split number describes a situation that can never happen. The chronological number is the one to quote."
 
-**Ex 5.2b. Sketch walk-forward validation. Why does it respect time?**
+**Ex 5.2b. Sketch walk-forward validation (add more folds). Why does it respect time?**
 ```
 Fold 1: train [0..k]     → test [k+1]
 Fold 2: train [0..k+1]   → test [k+2]
@@ -285,13 +392,7 @@ Every test point is strictly **after** all of its training data, so there's no f
 - **roll_mean_7** = one smoothed number for the recent **level/trend**, robust to single-day noise. A 7-day window also averages out the weekday effect. Raw lags give the individual days; the mean gives "is traffic up or down overall".
 - ⚠ Add: **SNAP** (food-benefit payment days) is **state-specific**. CA_1 is in California, so the flag reflects California's SNAP calendar and spending surges. A store in another state has different SNAP days or a weaker effect, so the same column could be noise there.
 
-**Ex 5.4b. Did the Random Forest beat the best baseline at H = 1? Where does it fail?**
-- **Yes:** RF 431.8 vs seasonal-naive 600.4 vs naive 917.2, about a 28% gain over the best baseline. Here the extra features (lags + calendar + events + SNAP) paid off. The general lesson still holds: always check; on easy short horizons complex models often only *tie* the simple rule.
-- ⚠ Fix: your sentence "complex models still win for short-horizon tasks because the future is uncertain" isn't the right reasoning. It won here because it **combines several signals** the single-rule baselines ignore.
-- Failures:
-  - **Lags the turns:** it reacts to a surge or drop a day late because it leans on recent lags.
-  - **Flattens peaks:** a Random Forest **averages** leaf values, so extremes are pulled toward the mean. The busiest 10% of days are ~580 units under.
-  - **Misses holiday shifts:** e.g. around 4 July, people shop the day **before** and it's quiet **on** the day. `is_event` only flags the day itself, so the model misses the pre-holiday surge (one concrete failure to name).
+
 
 ---
 
