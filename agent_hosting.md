@@ -1,4 +1,4 @@
-# Exam Review: Agents (L4), Safety / Observability / Cost (L5), Model Hosting
+ # Exam Review: Agents (L4), Safety / Observability / Cost (L5), Model Hosting
 
 This file covers the concepts only. The course's story examples (Meridian HR, Telva Pay, the support assistant) are left out. Where an example helps, it is a small, generic one.
 
@@ -24,8 +24,10 @@ How to use it:
 
 **How to evaluate a system honestly:**
 - **Score by type of question, not one overall number.** An average of 71% can hide one type that scores 0%. Only the per-type table tells you what to fix.
-- **Refusing an answerable question counts as wrong.** If it didn't, a system that always says "I don't know" would look safe and accurate.
+  - simple, multi, cal, record, unanswerable
+- **Refusing an answerable question counts as wrong.** If it didn't, a system that always says "I don't know" would look safe and accurate. but is wrong
 - **Repeat each question several times (`N_RUNS`).** The model samples its words, so the same question can give different answers. One run cannot tell a reliable answer from a lucky one.
+  - Due due temp, model can reply diff answer to the same question, so run multiple times
 - **Programmatic checks** (for example, a regex looking for "8" in the answer) are free and repeatable, but blunt. They can pass a wrong answer that happens to contain the number, or fail a right answer that is worded differently.
 - **Small samples are noisy.** With only 12 attempts, one wrong answer moves the score by 8 points.
 
@@ -34,6 +36,7 @@ How to use it:
 **Read the failures, not just the score.** If the data the answer needs never reaches the model, no prompt can fix it. Example: the model is asked "how many leave days do I have left?" but nothing fetches the user's record.
 
 **Patching a workflow doesn't scale.** You can add a branch: "if logged in, fetch the record". But every new kind of request needs another hand-written branch. When **the next step depends on what the last step found**, you need an agent with tools.
+- u cannot prempt a step ahead and fix it. That is why u need agentic flow sometimes, which is more flexible.
 
 **Identity comes from the login, never from the chat.** If the user ID came from the message text, anyone could type a colleague's ID and read their data.
 
@@ -48,14 +51,14 @@ How to use it:
 
 ## A2. Tool calling (Notebook 02)
 
-**The core idea.** A tool call is a **request**, not an action. The model only writes structured text that asks for a tool. Your code decides whether to run it.
+**The core idea.** A tool call is a **request**(not allow AI to exe), not an action. The model only writes structured text (tool request) that asks for a tool. Your code decides whether to run it.
 
 **What a tool call contains:**
 - the tool **name**;
 - the **arguments**, as a JSON *string* (not a dict, and it may be malformed);
 - an **id** (`tool_call_id`), so the result can be matched back to the request.
 
-**What a tool definition contains.** A tool is a **name + description + JSON Schema** for its arguments.
+**What a tool definition contains.** A tool is a **name + description + JSON Schema** for its arguments. This is tool menu passed along with system prompt to AI model.
 - The **description** is the model's only manual. The model uses the name and description to decide *whether* and *when* to call it.
 - The **JSON Schema** sets the rules for the arguments: types, `enum` lists, `pattern`, min/max and `additionalProperties: false`. The harness uses it as the first input check.
 - The Python function and its permission level are **not** sent to the model.
@@ -75,7 +78,7 @@ How to use it:
 - `write`: only for your own ID, *and* with a human's approval.
 - Anything else is **denied by default** (**default-deny**). A new tool stays blocked until someone decides its level, like a firewall that blocks every port not explicitly opened.
 
-**`execute_tool`: run every call safely.** The steps, and what breaks if you skip each one:
+**`execute_tool`: run every call safely.** This function run function based on the arguments from ai model。 The steps, and what breaks if you skip each one:
 
 | Step | If skipped |
 |---|---|
@@ -220,7 +223,7 @@ Then check that **normal runs are left alone**: run the full question set and co
 
 **The cost of autonomy.** An agent makes more calls than a workflow. Input tokens grow even faster than calls, because each call re-sends the conversation.
 
-**Cost per correct answer = total cost ÷ accuracy.** This is the fairest single number. A cheap system that's often wrong isn't really cheap.
+**Cost per correct answer = mean cost per question ÷ accuracy.** This is the fairest single number. A cheap system that's often wrong isn't really cheap.
 
 **When to use which:**
 
@@ -270,7 +273,9 @@ Then check that **normal runs are left alone**: run the full question set and co
 - A **reasoning item** is the model's encrypted working. It must be sent back directly before the item it led to.
 - With `store=False`, the server keeps no copy, so your code must re-send everything.
 
-**Pairing rules a policy must not break:** each `function_call` keeps its output, and each reasoning item keeps the item after it. Break either and the API rejects the request. A policy returns a *view* for this one call. It must never change the stored list, because later calls still need the whole conversation.
+**Pairing rules a policy must not break:** 
+- each `function_call` keeps its output, and each reasoning item keeps the item after it. 
+- Break either and the API rejects the request. A policy returns a *view* for this one call. It must never change the stored list, because later calls still need the whole conversation.
 
 **Where tokens go:**
 - The system prompt and tool definitions are re-sent on every call. With several tools, they can outweigh a short conversation.
@@ -308,19 +313,20 @@ Then check that **normal runs are left alone**: run the full question set and co
 ## A7. Memory (Notebook 08)
 
 **The core idea.** **Working context** is one conversation. It is gone when the conversation ends. **Long-term memory** is a store the agent writes to, searches, and copies into a *later* conversation.
+- we store long term memory in json format
 
 **Three questions memory raises:** what to keep, how to find it again, and when not to trust it.
 
-**1. What to keep: a persistence policy.**
+**1. Ingest- What to keep: a persistence policy.**
 - **Keep only what no tool can return.** Examples: preferences ("don't page me before 7am"), decisions and episodes. Don't store a fact a tool can look up, like a server's region, because the copy can go stale and only the source knows what's true now.
-- Two hard-coded rules run before the model: **never keep a tool result**, and **never keep a question**. Being in code means no instruction can override them, and they save model calls.
+- Two hard-coded rules run before the model: **never keep a tool result (can retrieve later)**, and **never keep a question (only need to keep answers)**. Being in code means no instruction can override them, and they save model calls.
 - Don't rely on phrases like "remember that". People rarely say them, and "remember that X is in region Y" is a tool fact that shouldn't be kept.
 - **Turn relative dates into real dates**: "next two weeks" becomes a start and end date, in both the text and the `valid_until` field.
 - Each memory must make sense on its own.
 - Test the policy on a **held-out** set you never tuned on, and use it once. A policy tweaked until it passes the test set is fitted to it.
 - Kinds of memory: **preference, decision, episode**.
 
-**2. Finding memories: retrieval.**
+**2. retrieval - Finding memories: retrieval.**
 - **Recall** = needed memories returned ÷ all needed memories. "Did we find what we needed?"
 - **Precision** = needed memories returned ÷ all memories returned. "How much of what we returned was useful?"
 - Three methods compared:
@@ -329,11 +335,11 @@ Then check that **normal runs are left alone**: run the full question set and co
 |---|---|---|
 | Keyword search | Cheap | Misses different wording ("billing" vs "billing-worker", "handover" vs "handovers") |
 | Embedding search | Cheap, handles meaning | Returns a fixed top-k, so precision is capped (top-3 with one needed item gives at most 1/3) |
-| Index in context (a model reads a one-line summary of each memory and picks) | Very precise | Costs a model call, and its tokens grow with the store size |
+| Index in context (a model reads a one-line summary of each memory and picks) then use ID of the oneline to find the full paragraph | Very precise | Costs a model call, and its tokens grow with the store size |
 
 - Choose with a token budget. The index can be best for a small store and too expensive for a large one.
 
-**3. When not to trust a memory:**
+**3. Validate - When not to trust a memory:**
 - **Expired**: its `valid_until` date has passed.
 - **Conflicting**: two memories disagree. Settle it with `resolve`'s four rules, in order:
   1. An expired memory loses.
@@ -344,6 +350,7 @@ Then check that **normal runs are left alone**: run the full question set and co
 - **Out of date**: the source now says something different.
 
 **Reading the truth isn't enough.** An agent can read the correct value from a tool and still follow a stale memory, because the memory reads like a standing instruction. The instructions must say **which source wins**, for example: "Be careful with memories: they might be out of date. The tool result wins." A warning that says *what* could be wrong works much better than a vague one.
+- always trust grounded truth than memory
 
 **Where a memory check can go:** when writing, when retrieving, when resolving conflicts, and before acting.
 
@@ -393,12 +400,12 @@ class Route(BaseModel):
 
 **Router vs handoff:**
 - **Router**: returns a decision your code acts on. It's good for enforcing rules and for routes with no agent behind them (a person, a refusal). Every decision is logged.
-- **Handoff** (OpenAI Agents SDK): a dispatcher agent picks a specialist from short `handoff_description`s and **hands over the whole conversation**. The specialist then talks to the user directly.
+- **Handoff** (OpenAI Agents SDK): a dispatcher agent picks a specialist from short `handoff_description`s (capability description of ur subagents) and **hands over the whole conversation**. The specialist then talks to the user directly.
 - A handoff's weak spot: the dispatcher can always answer a request itself. So handoffs are worst on requests that fit *no* agent. A router can't do this, because it must return one of its labels.
 
 ### Sub-agents
 
-- The **lead agent** has no data tools. Its only tool starts a sub-agent with an **assignment**: which entity, what task, and which **fields** to bring back.
+- The **lead agent** has no data tools. Its only tool starts a sub-agent with an **assignment**: which entity/service to call, what task, and which **fields** to bring back.
 - Each **sub-agent** works in its **own, separate conversation** with all the tools, and returns a **report**.
 - The lead sees **only the report**: not the sub-agent's tool calls or reasoning.
 - **Report format:**
@@ -410,7 +417,7 @@ class Route(BaseModel):
   - A result is a failure only if it has an `"error"` **key**. Text that mentions "error" is still a success.
   - An empty list (`[]`, "no incidents") is a **fact**, not a missing field.
   - A failure followed by a successful retry appears in both `failed` and `facts`.
-- **Blind spot:** `missing` tracks missing *fields*, not missing *entities*. If a whole service is skipped, nothing warns you. Only a cross-check against the master list catches it.
+- **Blind spot:** `missing` tracks missing *fields*, not missing *entities*/services. If a whole service is skipped, nothing warns you. Only a cross-check against the master list catches it.
 - **The lead only gets what it explicitly asks for.** If it forgets a field the verdict depends on, that field is stripped from the report and the verdict is wrong.
 - **Handling `failed` or `missing`:** retry reads (safe, because reads are idempotent). If still unresolved, say clearly in the answer that the data couldn't be retrieved. **Never let the model guess.**
 - **The paradox.** Each sub-agent's context is smaller, so the lead's largest call shrinks. But total calls and cost go *up*, because each sub-agent needs its own calls.
@@ -430,7 +437,7 @@ class Route(BaseModel):
 
 ### Choosing an architecture
 
-**Rules first, then measurements.**
+**Hard Rules to clear first, then measurements.**
 1. **Filter**: does it obey the hard rule (for example, "a request to *do* something goes to a person")? If not, it's out, however well it scores.
 2. **Choose**: among the survivors, compare facts, wrong answers, cost, tokens and the largest call. Overlapping ranges count as equal.
 
@@ -440,7 +447,7 @@ Where an architecture check can go: the router, the tools each agent gets, the l
 
 ---
 
-## A9. Context poisoning (Notebook 10)
+## A9. Context poisoning (Notebook 10) - data poisoning
 
 **The core idea.** **Context poisoning** is when a value that was **never true** gets into the agent's context and is treated as fact from then on. It comes from a mistake (a buggy tool, or the model inventing something), not an attacker.
 
@@ -456,6 +463,8 @@ Where an architecture check can go: the router, the tools each agent gets, the l
 Each copy looks as trustworthy as the original tool result.
 
 **A correct read fixes the conversation, not the copies.** After a later correct read, the conversation is fine. But the memory, the filed request and the report are already elsewhere and don't re-read the source.
+- you can fix the current conversation
+- but long term memory might not be fixed
 
 **The model's own invention is poison too.** If an earlier assistant message states a wrong value, the model tends to repeat it. It's in the conversation, nothing marks it as unbacked, and the model has no tool to check.
 
@@ -483,6 +492,7 @@ Each copy looks as trustworthy as the original tool result.
 ## A10. Incident triage (Notebook 11)
 
 **The core idea.** Find the **first wrong item**, not the most visible one. The complaint is about the last reply, but the cause is usually earlier. Everything after the first wrong item is a consequence, and fixing a consequence leaves the cause.
+- go to root problem, which is the first wrong item in the chain
 
 **Three steps:** find the first wrong item, classify it, and ask "was it ever true?".
 
@@ -490,7 +500,7 @@ Each copy looks as trustworthy as the original tool result.
 
 | # | Question | Root cause |
 |---|---|---|
-| 1 | Was the right value in the conversation, then not sent or not used? | **Context** |
+| 1 | Was the right value in the conversation (in memory, so inspect session logs), then not sent or not used? | **Context** |
 | 2 | Was the first wrong item a memory the agent acted on? | **Memory** |
 | 3 | Did a value fail to reach the agent (route, tools, report)? | **Architecture** |
 | 4 | Was it a never-true tool result or model claim? | **Poisoning** |
@@ -747,8 +757,10 @@ More rules:
 **The core idea.** **VRAM** is the memory on the GPU card. It must hold three things:
 
 ```
-VRAM needed ≈ weights + KV cache + overhead (~2 GB)
+VRAM needed ≈ weights + KV cache (activation values) + overhead (~2 GB driver)
 ```
+
+vram = weights byte + kv cache + overhead(driver)
 
 **Weights** are the model's numbers, loaded once and shared by all users.
 
@@ -765,10 +777,15 @@ weights = parameter count × bytes per parameter
 
 **Precision** is how many bits store each number. **Quantisation** means storing weights in fewer bits. Real 4-bit files are about 10–20% bigger than the clean sum, because embeddings and scales are kept in higher precision.
 
+- precision - how many bits for each number
+- quantisation - store fewer bits for each number
+
 **KV cache: per-user conversation memory.**
 - Generation is **autoregressive**: each new token attends to every token before it.
-- Attention turns each token into a **query**, a **key** and a **value**. Old tokens' keys and values never change, so they're stored instead of recomputed. That store is the **KV cache**.
-- Unlike weights, the KV cache is **per request**, and it grows with every token.
+- Attention turns each token into a **query**, a **key** and a **value**. Old tokens' keys and values never change, so they're stored instead of recomputed. That store is the **KV cache**. So that we do not have to recal again. We can reuse instead of recal.
+- Unlike weights, the KV cache is **per request or per input**, and it grows with every token.
+  - After prefill, the KV cache holds the $K$ and $V$ vectors for all of your input prompt tokens—that part is indeed fixed.However, the KV cache continues to grow during the decode (generation) phase because every newly generated output token immediately becomes part of the input context for the next token.
+  - Here is how the cache grows step-by-step for a 3-token prompt ("What is AI?") generating a 3-token answer ("Artificial intelligence is"):Model predicts next token: Artificial, The model takes Artificial, computes its $K$ and $V$ vectors across every layer, and appends them to the KV cache.Cache now holds 4 tokens: [What, is, AI?, Artificial]. Model attends to all 4 cached vectors to predict: intelligence
 
 ```
 KV bytes per token = 2 (K and V) × n_layers × n_kv_heads × head_dim × bytes_per_value
@@ -788,9 +805,10 @@ Example: 32 layers, 8 KV heads, head_dim 128, bf16 gives 2 × 32 × 8 × 128 × 
 - weights = 7.6 × 2 = 15.2 GB
 - left for KV = 24 − 15.2 − 2 = 6.8 GB
 - one request = 56 KB × 4,096 ≈ 0.22 GB
-- concurrent full-length requests ≈ 6.8 ÷ 0.22 ≈ **31**
+- concurrent full-length requests ≈ 6.8 (KV cache) ÷ 0.22 ≈ **31**
+  - can take 31 concurrent request of the same 4096 token sequence
 
-In vLLM, you first multiply VRAM by `--gpu-memory-utilization` (default 0.9), so the real number is lower.
+In vLLM, you first multiply VRAM by `--gpu-memory-utilization` (default 0.9), so the real number is lower. 0.9 is reserve for kv cache. real utilization might be lower
 
 **Memory bandwidth sets decode speed.** To write *one* token, the GPU reads *every* weight once.
 
@@ -799,6 +817,7 @@ best-case time per token ≈ weight bytes ÷ memory bandwidth
 ```
 
 A 16 GB model on a 300 GB/s card takes at least 16 ÷ 300 ≈ 53 ms per token, about 19 tokens/s for one user. This is why a small model on a fast card can beat a big model on a slow one.
+- memory bandwith is about how many GB of weights or activation values u can load into memory per second
 
 ---
 
@@ -806,8 +825,8 @@ A 16 GB model on a 300 GB/s card takes at least 16 ÷ 300 ≈ 53 ms per token, a
 
 **The core idea.** Three gates, checked **in order**. A model that fails one never reaches the next:
 1. **Does it fit?** Weights + KV cache + overhead must fit in VRAM.
-2. **Can I run it?** The serving engine must support the architecture, the quantisation format and your GPU generation.
-3. **Am I allowed to?** The licence must allow your use.
+2. **Can I run it?** The serving engine must support the architecture, the quantisation format (Precision) and your GPU generation.
+3. **Legally, am I allowed to?** The licence must allow your use.
 
 Only then do you compare quality: task fit, language coverage, benchmarks, and your own evaluation set.
 
@@ -856,7 +875,7 @@ A wrong format pairing (GGUF in vLLM, AWQ in Ollama) is a common way to lose a d
 
 **Three questions, in order:**
 1. **Where may the data go?** If it can't leave the network, only on-prem remains.
-2. **How much traffic is there?** An API bills per token and costs nothing when idle. A GPU bills per hour, busy or idle.
+2. **How much traffic is there?** An API bills per token and costs nothing when idle. A GPU bills per hour, busy or idle. 
 3. **Who will run it?** Self-hosting means drivers, CUDA versions and out-of-memory crashes at 2am.
 
 | | On-prem | Cloud GPU | Hosted API |
@@ -867,7 +886,7 @@ A wrong format pairing (GGUF in vLLM, AWQ in Ollama) is a common way to lose a d
 | Models | Any open model or fine-tune | Any open model or fine-tune | Only what the provider offers |
 | Time to first call | Days to weeks | Hours | Minutes |
 
-**Hybrids are common.** Serve the steady baseline yourself, and spill over to a hosted API when **queue depth** crosses a threshold. Route on load, not on the day of the week.
+**Hybrids are common.** Serve the steady baseline yourself, and spill over to a hosted API when **queue depth** (no of customers waiting) crosses a threshold. Route on load, not on the day of the week.
 
 **Chat templates.** The model was trained on one exact text format, with special markers for roles and turn ends. A **chat template** (Jinja, stored in `tokenizer_config.json`) turns a list of messages into that string.
 - With a hosted API, the provider applies it for you.
